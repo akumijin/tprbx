@@ -1,21 +1,35 @@
+-- // Akuma Scripts | Main Menu v2
+-- // Key System | AFK | Teleport | Spectate
+-- // github.com/akumijin/tprbx
+
+-- // ===================== KEY SYSTEM =====================
+
 local KEY_URL = "https://raw.githubusercontent.com/akumijin/tprbx/main/key.txt"
 
-local keyOk, VALID_KEY = pcall(function()
-    return game:HttpGet(KEY_URL):gsub("%s+", "")
+local keyOk, STORED_HASH = pcall(function()
+    return tonumber(game:HttpGet(KEY_URL):gsub("%s+", ""))
 end)
 
-if not keyOk or not VALID_KEY or VALID_KEY == "" then
+if not keyOk or not STORED_HASH then
     warn("[KeySystem] Could not fetch key. Check repo or internet.")
     return
 end
 
-local Players         = game:GetService("Players")
-local RunService      = game:GetService("RunService")
-local UserInputService= game:GetService("UserInputService")
-local LP              = Players.LocalPlayer
-local Camera          = workspace.CurrentCamera
+local function hashString(s)
+    local h = 5381
+    for i = 1, #s do
+        h = bit32.bxor(h * 33, string.byte(s, i)) % 4294967296
+    end
+    return h
+end
 
--- Key GUI
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LP               = Players.LocalPlayer
+local Camera           = workspace.CurrentCamera
+
+-- // Key GUI
 local ksg = Instance.new("ScreenGui")
 ksg.ResetOnSpawn = false
 ksg.Name = "AkumaKey"
@@ -102,8 +116,8 @@ Instance.new("UICorner", ksubmit).CornerRadius = UDim.new(0,6)
 
 local verified = Instance.new("BindableEvent")
 local function trySubmit()
-    local entered = kbox.Text:gsub("%s+","")
-    if entered == VALID_KEY then
+    local entered = kbox.Text:gsub("%s+", "")
+    if hashString(entered) == STORED_HASH then
         ksg:Destroy()
         verified:Fire()
     else
@@ -122,23 +136,29 @@ verified:Destroy()
 
 -- // ===================== STATE =====================
 
-local hasMouseAPI = typeof(mousemoveabs)=="function" and typeof(mouse1click)=="function"
+local hasMouseAPI = typeof(mousemoveabs) == "function"
+                 and typeof(mouse1click)  == "function"
+
+-- Capture mode: only one slot can be waiting at a time
+local captureMode   = false
+local captureSlotID = nil
+local captureResolvers = {}  -- [slotID] = { xBox, yBox, capBtn, state }
 
 local afkState = {
     jump   = { on=false, interval=10000, elapsed=0 },
     follow = { on=false, interval=10000, elapsed=0 },
     fixed  = {},
 }
-for i=1,6 do
+for i = 1, 6 do
     afkState.fixed[i] = { on=false, interval=10000, elapsed=0, x=0, y=0 }
 end
 
 local tpState = {
-    noclip   = false,
-    slotCount= 3,
-    slots    = {},
+    noclip    = false,
+    slotCount = 3,
+    slots     = {},
 }
-for i=1,10 do
+for i = 1, 10 do
     tpState.slots[i] = { name="Slot "..i, x=nil, y=nil, z=nil }
 end
 
@@ -156,7 +176,6 @@ local function getRoot()
     return c:FindFirstChild("HumanoidRootPart")
 end
 
--- Jump: all 3 methods
 local function doJump()
     local ok = pcall(function()
         local VIM = game:GetService("VirtualInputManager")
@@ -185,7 +204,7 @@ end
 
 local function doFixedClick(x, y)
     if not hasMouseAPI then return end
-    pcall(function() mousemoveabs(x,y); mouse1click() end)
+    pcall(function() mousemoveabs(x, y); mouse1click() end)
 end
 
 local function stopSpectate()
@@ -229,10 +248,9 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = LP.PlayerGui
 
--- Outer window
 local Win = Instance.new("Frame")
-Win.Size = UDim2.new(0, 320, 0, 500)
-Win.Position = UDim2.new(0, 20, 0.5, -250)
+Win.Size = UDim2.new(0, 320, 0, 520)
+Win.Position = UDim2.new(0, 20, 0.5, -260)
 Win.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
 Win.BorderSizePixel = 0
 Win.Active = true
@@ -245,7 +263,7 @@ do
     s.Color = Color3.fromRGB(50,50,50); s.Thickness = 1.2; s.Parent = Win
 end
 
--- Title bar
+-- // Title bar
 local TBar = Instance.new("Frame")
 TBar.Size = UDim2.new(1,0,0,38)
 TBar.BackgroundColor3 = Color3.fromRGB(18,18,18)
@@ -275,10 +293,49 @@ KHint.TextSize = 10
 KHint.TextXAlignment = Enum.TextXAlignment.Right
 KHint.Parent = TBar
 
--- Tab buttons row
+-- // PINNED COORD BAR (always visible, below title)
+local PinnedBar = Instance.new("Frame")
+PinnedBar.Size = UDim2.new(1,-20,0,28)
+PinnedBar.Position = UDim2.new(0,10,0,42)
+PinnedBar.BackgroundColor3 = Color3.fromRGB(16,16,16)
+PinnedBar.BorderSizePixel = 0
+PinnedBar.Parent = Win
+Instance.new("UICorner", PinnedBar).CornerRadius = UDim.new(0,6)
+do
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(35,35,35); s.Thickness = 1; s.Parent = PinnedBar
+end
+
+local PinnedCoordLbl = Instance.new("TextLabel")
+PinnedCoordLbl.Size = UDim2.new(0.6,0,1,0)
+PinnedCoordLbl.Position = UDim2.new(0,8,0,0)
+PinnedCoordLbl.BackgroundTransparency = 1
+PinnedCoordLbl.Text = "X: —   Y: —   Z: —"
+PinnedCoordLbl.TextColor3 = Color3.fromRGB(100,220,140)
+PinnedCoordLbl.Font = Enum.Font.GothamBold
+PinnedCoordLbl.TextSize = 11
+PinnedCoordLbl.TextXAlignment = Enum.TextXAlignment.Left
+PinnedCoordLbl.Parent = PinnedBar
+
+local PinnedMouseLbl = Instance.new("TextLabel")
+PinnedMouseLbl.Size = UDim2.new(0.4,-8,1,0)
+PinnedMouseLbl.Position = UDim2.new(0.6,0,0,0)
+PinnedMouseLbl.BackgroundTransparency = 1
+PinnedMouseLbl.Text = "M: 0, 0"
+PinnedMouseLbl.TextColor3 = Color3.fromRGB(90,140,90)
+PinnedMouseLbl.Font = Enum.Font.Gotham
+PinnedMouseLbl.TextSize = 10
+PinnedMouseLbl.TextXAlignment = Enum.TextXAlignment.Right
+PinnedMouseLbl.Parent = PinnedBar
+
+local PinnedRightPad = Instance.new("UIPadding")
+PinnedRightPad.PaddingRight = UDim.new(0,8)
+PinnedRightPad.Parent = PinnedBar
+
+-- // Tab buttons
 local TabRow = Instance.new("Frame")
 TabRow.Size = UDim2.new(1,-20,0,28)
-TabRow.Position = UDim2.new(0,10,0,42)
+TabRow.Position = UDim2.new(0,10,0,74)
 TabRow.BackgroundTransparency = 1
 TabRow.Parent = Win
 
@@ -287,9 +344,9 @@ local tabBtns = {}
 local tabPanels = {}
 local activeTab = 1
 
-local function makeTabBtn(label, idx)
+for idx, label in ipairs(tabNames) do
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1/#tabNames, -3, 1, 0)
+    btn.Size = UDim2.new(1/#tabNames, idx==1 and 0 or -3, 1, 0)
     btn.Position = UDim2.new((idx-1)/#tabNames, idx==1 and 0 or 2, 0, 0)
     btn.BackgroundColor3 = idx==1 and Color3.fromRGB(35,35,35) or Color3.fromRGB(22,22,22)
     btn.Text = label
@@ -300,23 +357,20 @@ local function makeTabBtn(label, idx)
     btn.Parent = TabRow
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
     tabBtns[idx] = btn
-    return btn
 end
 
-for i,name in ipairs(tabNames) do makeTabBtn(name, i) end
+-- // Tab panels
+local PANEL_Y = 106
+local PANEL_H = 406
 
--- Tab panels (content areas)
-local PANEL_Y = 76
-local PANEL_H = 416  -- Win height minus top stuff
-
-for i=1,3 do
+for i = 1, 3 do
     local panel = Instance.new("ScrollingFrame")
-    panel.Size = UDim2.new(1,-20, 0, PANEL_H)
+    panel.Size = UDim2.new(1,-20,0,PANEL_H)
     panel.Position = UDim2.new(0,10,0,PANEL_Y)
     panel.BackgroundTransparency = 1
     panel.BorderSizePixel = 0
     panel.ScrollBarThickness = 3
-    panel.ScrollBarImageColor3 = Color3.fromRGB(60,60,60)
+    panel.ScrollBarImageColor3 = Color3.fromRGB(55,55,55)
     panel.CanvasSize = UDim2.new(0,0,0,0)
     panel.AutomaticCanvasSize = Enum.AutomaticSize.Y
     panel.Visible = i == 1
@@ -328,24 +382,21 @@ for i=1,3 do
     layout.Padding = UDim.new(0,6)
     layout.Parent = panel
 
-    local padding = Instance.new("UIPadding")
-    padding.PaddingTop = UDim.new(0,4)
-    padding.PaddingBottom = UDim.new(0,4)
-    padding.Parent = panel
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0,4)
+    pad.PaddingBottom = UDim.new(0,8)
+    pad.Parent = panel
 end
 
--- Tab switching
 local function switchTab(idx)
     activeTab = idx
-    for i,btn in ipairs(tabBtns) do
+    for i, btn in ipairs(tabBtns) do
         btn.BackgroundColor3 = i==idx and Color3.fromRGB(35,35,35) or Color3.fromRGB(22,22,22)
         btn.TextColor3 = i==idx and Color3.fromRGB(220,220,220) or Color3.fromRGB(100,100,100)
-    end
-    for i,panel in ipairs(tabPanels) do
-        panel.Visible = i==idx
+        tabPanels[i].Visible = i == idx
     end
 end
-for i,btn in ipairs(tabBtns) do
+for i, btn in ipairs(tabBtns) do
     btn.MouseButton1Click:Connect(function() switchTab(i) end)
 end
 
@@ -361,10 +412,10 @@ local function makeSection(parent, title, order)
     frame.Parent = parent
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0,7)
 
-    local inner = Instance.new("UIListLayout")
-    inner.SortOrder = Enum.SortOrder.LayoutOrder
-    inner.Padding = UDim.new(0,4)
-    inner.Parent = frame
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0,4)
+    layout.Parent = frame
 
     local pad = Instance.new("UIPadding")
     pad.PaddingLeft = UDim.new(0,8)
@@ -375,10 +426,10 @@ local function makeSection(parent, title, order)
 
     if title and title ~= "" then
         local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1,0,0,16)
+        lbl.Size = UDim2.new(1,0,0,14)
         lbl.BackgroundTransparency = 1
         lbl.Text = title
-        lbl.TextColor3 = Color3.fromRGB(90,90,90)
+        lbl.TextColor3 = Color3.fromRGB(85,85,85)
         lbl.Font = Enum.Font.GothamBold
         lbl.TextSize = 10
         lbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -387,38 +438,6 @@ local function makeSection(parent, title, order)
     end
 
     return frame
-end
-
-local function makeToggleRow(parent, label, order)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1,0,0,28)
-    row.BackgroundTransparency = 1
-    row.LayoutOrder = order or 1
-    row.Parent = parent
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1,-60,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = label
-    lbl.TextColor3 = Color3.fromRGB(200,200,200)
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 11
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = row
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0,50,0,22)
-    btn.Position = UDim2.new(1,-50,0.5,-11)
-    btn.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    btn.Text = "OFF"
-    btn.TextColor3 = Color3.fromRGB(160,160,160)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.BorderSizePixel = 0
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,5)
-
-    return row, btn
 end
 
 local function setToggleBtn(btn, on)
@@ -439,10 +458,9 @@ local function parseMS(text, fallback)
     return fallback or 10000
 end
 
-local function makeTimerRow(parent, stateTable, label, order, fireFn)
-    local sec = makeSection(parent, label, order)
+local function makeTimerBlock(parent, stateTable, title, order)
+    local sec = makeSection(parent, title, order)
 
-    -- ms + toggle row
     local ctrlRow = Instance.new("Frame")
     ctrlRow.Size = UDim2.new(1,0,0,26)
     ctrlRow.BackgroundTransparency = 1
@@ -450,9 +468,9 @@ local function makeTimerRow(parent, stateTable, label, order, fireFn)
     ctrlRow.Parent = sec
 
     local msBox = Instance.new("TextBox")
-    msBox.Size = UDim2.new(0,70,0,22)
+    msBox.Size = UDim2.new(0,72,0,22)
     msBox.Position = UDim2.new(0,0,0.5,-11)
-    msBox.BackgroundColor3 = Color3.fromRGB(28,28,28)
+    msBox.BackgroundColor3 = Color3.fromRGB(26,26,26)
     msBox.Text = "10000"
     msBox.PlaceholderText = "ms"
     msBox.TextColor3 = Color3.fromRGB(200,200,200)
@@ -466,10 +484,10 @@ local function makeTimerRow(parent, stateTable, label, order, fireFn)
 
     local msLbl = Instance.new("TextLabel")
     msLbl.Size = UDim2.new(0,18,0,22)
-    msLbl.Position = UDim2.new(0,74,0.5,-11)
+    msLbl.Position = UDim2.new(0,76,0.5,-11)
     msLbl.BackgroundTransparency = 1
     msLbl.Text = "ms"
-    msLbl.TextColor3 = Color3.fromRGB(70,70,70)
+    msLbl.TextColor3 = Color3.fromRGB(65,65,65)
     msLbl.Font = Enum.Font.Gotham
     msLbl.TextSize = 10
     msLbl.Parent = ctrlRow
@@ -486,10 +504,9 @@ local function makeTimerRow(parent, stateTable, label, order, fireFn)
     toggleBtn.Parent = ctrlRow
     Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,4)
 
-    -- Timer bar
     local barBg = Instance.new("Frame")
     barBg.Size = UDim2.new(1,0,0,3)
-    barBg.BackgroundColor3 = Color3.fromRGB(28,28,28)
+    barBg.BackgroundColor3 = Color3.fromRGB(26,26,26)
     barBg.BorderSizePixel = 0
     barBg.LayoutOrder = 2
     barBg.Parent = sec
@@ -502,7 +519,6 @@ local function makeTimerRow(parent, stateTable, label, order, fireFn)
     barFill.Parent = barBg
     Instance.new("UICorner", barFill).CornerRadius = UDim.new(0,2)
 
-    -- Wiring
     toggleBtn.MouseButton1Click:Connect(function()
         stateTable.on = not stateTable.on
         if not stateTable.on then
@@ -511,6 +527,7 @@ local function makeTimerRow(parent, stateTable, label, order, fireFn)
         end
         setToggleBtn(toggleBtn, stateTable.on)
     end)
+
     msBox.FocusLost:Connect(function()
         local v = parseMS(msBox.Text, 10000)
         stateTable.interval = v
@@ -525,102 +542,98 @@ end
 
 local afkPanel = tabPanels[1]
 
--- Live mouse display
-local mouseSec = makeSection(afkPanel, "", 0)
-local mouseLbl = Instance.new("TextLabel")
-mouseLbl.Size = UDim2.new(1,0,0,16)
-mouseLbl.BackgroundTransparency = 1
-mouseLbl.Text = "Mouse:  X = 0    Y = 0"
-mouseLbl.TextColor3 = Color3.fromRGB(90,160,90)
-mouseLbl.Font = Enum.Font.Gotham
-mouseLbl.TextSize = 10
-mouseLbl.TextXAlignment = Enum.TextXAlignment.Left
-mouseLbl.LayoutOrder = 1
-mouseLbl.Parent = mouseSec
-
 -- Auto Jump
-local _, jumpBar = makeTimerRow(afkPanel, afkState.jump, "── AUTO JUMP", 1)
+local _, jumpBar = makeTimerBlock(afkPanel, afkState.jump, "── AUTO JUMP", 1)
 
 -- Follow Mouse
-local _, followBar = makeTimerRow(afkPanel, afkState.follow, "── AUTO CLICK (Follow Mouse)", 2)
+local _, followBar = makeTimerBlock(afkPanel, afkState.follow, "── AUTO CLICK (Follow Mouse)", 2)
 
--- Fixed x6
+-- Fixed x6 with Capture Mode
 local fixedBars = {}
-for i=1,6 do
+
+for i = 1, 6 do
     local s = afkState.fixed[i]
-    local sec, bar = makeTimerRow(afkPanel, s, "── FIXED CLICK #"..i, 2+i)
+    local sec, bar = makeTimerBlock(afkPanel, s, "── FIXED CLICK #"..i, 2+i)
     fixedBars[i] = bar
 
-    -- X/Y row
-    local xyRow = Instance.new("Frame")
-    xyRow.Size = UDim2.new(1,0,0,24)
-    xyRow.BackgroundTransparency = 1
-    xyRow.LayoutOrder = 3
-    xyRow.Parent = sec
+    -- Coord display inside section
+    local coordDisp = Instance.new("TextLabel")
+    coordDisp.Size = UDim2.new(1,0,0,14)
+    coordDisp.BackgroundTransparency = 1
+    coordDisp.Text = "Click position: not set"
+    coordDisp.TextColor3 = Color3.fromRGB(80,80,80)
+    coordDisp.Font = Enum.Font.Gotham
+    coordDisp.TextSize = 10
+    coordDisp.TextXAlignment = Enum.TextXAlignment.Left
+    coordDisp.LayoutOrder = 3
+    coordDisp.Parent = sec
 
-    local function makeCoordBox(lTxt, xOff)
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0,12,1,0)
-        lbl.Position = UDim2.new(0,xOff,0,0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = lTxt
-        lbl.TextColor3 = Color3.fromRGB(100,100,100)
-        lbl.Font = Enum.Font.GothamBold
-        lbl.TextSize = 11
-        lbl.Parent = xyRow
-
-        local box = Instance.new("TextBox")
-        box.Size = UDim2.new(0,60,1,-2)
-        box.Position = UDim2.new(0,xOff+14,0,1)
-        box.BackgroundColor3 = Color3.fromRGB(22,22,22)
-        box.Text = "0"
-        box.PlaceholderText = "0"
-        box.TextColor3 = Color3.fromRGB(200,200,200)
-        box.PlaceholderColor3 = Color3.fromRGB(70,70,70)
-        box.Font = Enum.Font.Gotham
-        box.TextSize = 11
-        box.BorderSizePixel = 0
-        box.ClearTextOnFocus = false
-        box.Parent = xyRow
-        Instance.new("UICorner", box).CornerRadius = UDim.new(0,4)
-        return box
-    end
-
-    local xBox = makeCoordBox("X", 0)
-    local yBox = makeCoordBox("Y", 84)
+    -- Capture button row
+    local capRow = Instance.new("Frame")
+    capRow.Size = UDim2.new(1,0,0,24)
+    capRow.BackgroundTransparency = 1
+    capRow.LayoutOrder = 4
+    capRow.Parent = sec
 
     local capBtn = Instance.new("TextButton")
-    capBtn.Size = UDim2.new(0,72,1,-2)
-    capBtn.Position = UDim2.new(1,-72,0,1)
+    capBtn.Size = UDim2.new(1,0,1,0)
     capBtn.BackgroundColor3 = Color3.fromRGB(35,60,100)
-    capBtn.Text = "📍 Capture"
+    capBtn.Text = "📍 Capture Click Position"
     capBtn.TextColor3 = Color3.fromRGB(160,200,255)
     capBtn.Font = Enum.Font.GothamBold
-    capBtn.TextSize = 10
+    capBtn.TextSize = 11
     capBtn.BorderSizePixel = 0
-    capBtn.Parent = xyRow
-    Instance.new("UICorner", capBtn).CornerRadius = UDim.new(0,4)
+    capBtn.Parent = capRow
+    Instance.new("UICorner", capBtn).CornerRadius = UDim.new(0,5)
 
-    xBox.FocusLost:Connect(function()
-        s.x = tonumber(xBox.Text) or 0
-        xBox.Text = tostring(s.x)
-    end)
-    yBox.FocusLost:Connect(function()
-        s.y = tonumber(yBox.Text) or 0
-        yBox.Text = tostring(s.y)
-    end)
-    capBtn.MouseButton1Click:Connect(function()
-        local mp = UserInputService:GetMouseLocation()
-        s.x = math.floor(mp.X)
-        s.y = math.floor(mp.Y)
-        xBox.Text = tostring(s.x)
-        yBox.Text = tostring(s.y)
-        capBtn.BackgroundColor3 = Color3.fromRGB(20,100,20)
-        capBtn.Text = "✔ Saved"
-        task.delay(1, function()
+    local function updateCoordDisp()
+        if s.x and s.x ~= 0 then
+            coordDisp.Text = string.format("Click position:  X=%d  Y=%d", s.x, s.y)
+            coordDisp.TextColor3 = Color3.fromRGB(100,200,120)
+        else
+            coordDisp.Text = "Click position: not set"
+            coordDisp.TextColor3 = Color3.fromRGB(80,80,80)
+        end
+    end
+
+    -- Store resolver so the global InputBegan can fire it
+    captureResolvers[i] = {
+        xSetter = function(x) s.x = x end,
+        ySetter = function(y) s.y = y end,
+        onCapture = function(x, y)
+            s.x = x; s.y = y
+            updateCoordDisp()
             capBtn.BackgroundColor3 = Color3.fromRGB(35,60,100)
-            capBtn.Text = "📍 Capture"
-        end)
+            capBtn.Text = "📍 Capture Click Position"
+            capBtn.TextColor3 = Color3.fromRGB(160,200,255)
+            print(string.format("[Fixed #%d] Captured → X=%d  Y=%d", i, x, y))
+        end
+    }
+
+    capBtn.MouseButton1Click:Connect(function()
+        if captureMode and captureSlotID == i then
+            -- Cancel if already waiting
+            captureMode = false
+            captureSlotID = nil
+            capBtn.BackgroundColor3 = Color3.fromRGB(35,60,100)
+            capBtn.Text = "📍 Capture Click Position"
+            capBtn.TextColor3 = Color3.fromRGB(160,200,255)
+            return
+        end
+
+        -- Cancel any previously waiting capture
+        if captureMode and captureSlotID and captureSlotID ~= i then
+            local prev = captureResolvers[captureSlotID]
+            if prev then
+                -- reset that button visually
+            end
+        end
+
+        captureMode = true
+        captureSlotID = i
+        capBtn.BackgroundColor3 = Color3.fromRGB(180,120,20)
+        capBtn.Text = "🖱 Click anywhere to capture..."
+        capBtn.TextColor3 = Color3.fromRGB(255,220,100)
     end)
 end
 
@@ -628,22 +641,36 @@ end
 
 local tpPanel = tabPanels[2]
 
--- Live coords
-local coordSec = makeSection(tpPanel, "", 0)
-local coordLbl = Instance.new("TextLabel")
-coordLbl.Size = UDim2.new(1,0,0,20)
-coordLbl.BackgroundTransparency = 1
-coordLbl.Text = "X: —    Y: —    Z: —"
-coordLbl.TextColor3 = Color3.fromRGB(100,220,140)
-coordLbl.Font = Enum.Font.GothamBold
-coordLbl.TextSize = 12
-coordLbl.TextXAlignment = Enum.TextXAlignment.Left
-coordLbl.LayoutOrder = 1
-coordLbl.Parent = coordSec
-
 -- Noclip
 local noclipSec = makeSection(tpPanel, "── NOCLIP", 1)
-local _, noclipBtn = makeToggleRow(noclipSec, "👻 Noclip", 1)
+local noclipRow = Instance.new("Frame")
+noclipRow.Size = UDim2.new(1,0,0,28)
+noclipRow.BackgroundTransparency = 1
+noclipRow.LayoutOrder = 1
+noclipRow.Parent = noclipSec
+
+local noclipLbl = Instance.new("TextLabel")
+noclipLbl.Size = UDim2.new(1,-60,1,0)
+noclipLbl.BackgroundTransparency = 1
+noclipLbl.Text = "👻 Noclip"
+noclipLbl.TextColor3 = Color3.fromRGB(200,200,200)
+noclipLbl.Font = Enum.Font.GothamBold
+noclipLbl.TextSize = 11
+noclipLbl.TextXAlignment = Enum.TextXAlignment.Left
+noclipLbl.Parent = noclipRow
+
+local noclipBtn = Instance.new("TextButton")
+noclipBtn.Size = UDim2.new(0,50,0,22)
+noclipBtn.Position = UDim2.new(1,-50,0.5,-11)
+noclipBtn.BackgroundColor3 = Color3.fromRGB(50,50,50)
+noclipBtn.Text = "OFF"
+noclipBtn.TextColor3 = Color3.fromRGB(160,160,160)
+noclipBtn.Font = Enum.Font.GothamBold
+noclipBtn.TextSize = 10
+noclipBtn.BorderSizePixel = 0
+noclipBtn.Parent = noclipRow
+Instance.new("UICorner", noclipBtn).CornerRadius = UDim.new(0,5)
+
 noclipBtn.MouseButton1Click:Connect(function()
     tpState.noclip = not tpState.noclip
     setToggleBtn(noclipBtn, tpState.noclip)
@@ -712,12 +739,11 @@ local function makeSlotCard(i)
     card.Size = UDim2.new(1,0,0,52)
     card.BackgroundColor3 = Color3.fromRGB(20,20,20)
     card.BorderSizePixel = 0
-    card.LayoutOrder = i + 2
+    card.LayoutOrder = i+2
     card.Visible = i <= tpState.slotCount
     card.Parent = tpPanel
     Instance.new("UICorner", card).CornerRadius = UDim.new(0,7)
 
-    -- Name label
     local nameLbl = Instance.new("TextLabel")
     nameLbl.Size = UDim2.new(0,100,0,18)
     nameLbl.Position = UDim2.new(0,8,0,4)
@@ -730,7 +756,6 @@ local function makeSlotCard(i)
     nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
     nameLbl.Parent = card
 
-    -- Edit btn
     local editBtn = Instance.new("TextButton")
     editBtn.Size = UDim2.new(0,36,0,18)
     editBtn.Position = UDim2.new(0,108,0,4)
@@ -743,7 +768,6 @@ local function makeSlotCard(i)
     editBtn.Parent = card
     Instance.new("UICorner", editBtn).CornerRadius = UDim.new(0,4)
 
-    -- Name textbox
     local nameBox = Instance.new("TextBox")
     nameBox.Size = UDim2.new(0,142,0,20)
     nameBox.Position = UDim2.new(0,6,0,4)
@@ -760,19 +784,17 @@ local function makeSlotCard(i)
     nameBox.Parent = card
     Instance.new("UICorner", nameBox).CornerRadius = UDim.new(0,4)
 
-    -- Coord label
-    local coordLabel = Instance.new("TextLabel")
-    coordLabel.Size = UDim2.new(1,-10,0,14)
-    coordLabel.Position = UDim2.new(0,8,0,6)
-    coordLabel.BackgroundTransparency = 1
-    coordLabel.Text = "Not saved"
-    coordLabel.TextColor3 = Color3.fromRGB(75,75,75)
-    coordLabel.Font = Enum.Font.Gotham
-    coordLabel.TextSize = 10
-    coordLabel.TextXAlignment = Enum.TextXAlignment.Right
-    coordLabel.Parent = card
+    local coordLbl = Instance.new("TextLabel")
+    coordLbl.Size = UDim2.new(1,-10,0,14)
+    coordLbl.Position = UDim2.new(0,8,0,6)
+    coordLbl.BackgroundTransparency = 1
+    coordLbl.Text = "Not saved"
+    coordLbl.TextColor3 = Color3.fromRGB(75,75,75)
+    coordLbl.Font = Enum.Font.Gotham
+    coordLbl.TextSize = 10
+    coordLbl.TextXAlignment = Enum.TextXAlignment.Right
+    coordLbl.Parent = card
 
-    -- Save btn
     local saveBtn = Instance.new("TextButton")
     saveBtn.Size = UDim2.new(0.48,-4,0,20)
     saveBtn.Position = UDim2.new(0,6,1,-24)
@@ -785,7 +807,6 @@ local function makeSlotCard(i)
     saveBtn.Parent = card
     Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0,5)
 
-    -- TP btn
     local tpBtn = Instance.new("TextButton")
     tpBtn.Size = UDim2.new(0.48,-4,0,20)
     tpBtn.Position = UDim2.new(0.5,2,1,-24)
@@ -800,11 +821,11 @@ local function makeSlotCard(i)
 
     local function refreshCoord()
         if s.x then
-            coordLabel.Text = string.format("X:%.1f  Y:%.1f  Z:%.1f", s.x, s.y, s.z)
-            coordLabel.TextColor3 = Color3.fromRGB(100,200,120)
+            coordLbl.Text = string.format("X:%.1f  Y:%.1f  Z:%.1f", s.x, s.y, s.z)
+            coordLbl.TextColor3 = Color3.fromRGB(100,200,120)
         else
-            coordLabel.Text = "Not saved"
-            coordLabel.TextColor3 = Color3.fromRGB(75,75,75)
+            coordLbl.Text = "Not saved"
+            coordLbl.TextColor3 = Color3.fromRGB(75,75,75)
         end
     end
     refreshCoord()
@@ -818,7 +839,7 @@ local function makeSlotCard(i)
     end)
     nameBox.FocusLost:Connect(function()
         local n = nameBox.Text
-        if n=="" then n="Slot "..i end
+        if n == "" then n = "Slot "..i end
         s.name = n
         nameLbl.Text = n
         nameBox.Visible = false
@@ -849,11 +870,11 @@ local function makeSlotCard(i)
     slotFrames[i] = card
 end
 
-for i=1,10 do makeSlotCard(i) end
+for i = 1, 10 do makeSlotCard(i) end
 
 local function refreshSlots()
     slotNumLbl.Text = tostring(tpState.slotCount)
-    for i=1,10 do
+    for i = 1, 10 do
         slotFrames[i].Visible = i <= tpState.slotCount
     end
 end
@@ -875,7 +896,6 @@ end)
 
 local specPanel = tabPanels[3]
 
--- Status
 local specStatusSec = makeSection(specPanel, "", 0)
 local specStatusLbl = Instance.new("TextLabel")
 specStatusLbl.Size = UDim2.new(1,0,0,16)
@@ -888,7 +908,6 @@ specStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
 specStatusLbl.LayoutOrder = 1
 specStatusLbl.Parent = specStatusSec
 
--- Return button
 local returnSec = makeSection(specPanel, "", 1)
 local returnBtn = Instance.new("TextButton")
 returnBtn.Size = UDim2.new(1,0,0,28)
@@ -908,16 +927,11 @@ returnBtn.MouseButton1Click:Connect(function()
     specStatusLbl.TextColor3 = Color3.fromRGB(100,100,100)
 end)
 
--- Player list section
 local playerListSec = makeSection(specPanel, "── PLAYERS", 2)
-
 local playerBtns = {}
 
 local function refreshPlayerList()
-    -- Clear old buttons
-    for _, btn in ipairs(playerBtns) do
-        btn:Destroy()
-    end
+    for _, b in ipairs(playerBtns) do b:Destroy() end
     playerBtns = {}
 
     local order = 1
@@ -926,8 +940,8 @@ local function refreshPlayerList()
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1,0,0,30)
-        btn.BackgroundColor3 = Color3.fromRGB(25,25,25)
-        btn.Text = "👤  " .. plr.DisplayName .. "  (@" .. plr.Name .. ")"
+        btn.BackgroundColor3 = Color3.fromRGB(22,22,22)
+        btn.Text = "👤  "..plr.DisplayName.."  (@"..plr.Name..")"
         btn.TextColor3 = Color3.fromRGB(200,200,200)
         btn.Font = Enum.Font.Gotham
         btn.TextSize = 11
@@ -937,21 +951,19 @@ local function refreshPlayerList()
         btn.Parent = playerListSec
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
 
-        -- Padding inside button text
         local pad = Instance.new("UIPadding")
         pad.PaddingLeft = UDim.new(0,8)
         pad.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
             spectatePlayer(plr)
-            specStatusLbl.Text = "👁 Spectating: " .. plr.DisplayName
+            specStatusLbl.Text = "👁 Spectating: "..plr.DisplayName
             specStatusLbl.TextColor3 = Color3.fromRGB(100,200,255)
-            -- Highlight selected
             for _, b in ipairs(playerBtns) do
-                b.BackgroundColor3 = Color3.fromRGB(25,25,25)
+                b.BackgroundColor3 = Color3.fromRGB(22,22,22)
                 b.TextColor3 = Color3.fromRGB(200,200,200)
             end
-            btn.BackgroundColor3 = Color3.fromRGB(30,60,90)
+            btn.BackgroundColor3 = Color3.fromRGB(28,55,90)
             btn.TextColor3 = Color3.fromRGB(150,200,255)
         end)
 
@@ -961,10 +973,10 @@ local function refreshPlayerList()
 
     if #playerBtns == 0 then
         local empty = Instance.new("TextLabel")
-        empty.Size = UDim2.new(1,0,0,24)
+        empty.Size = UDim2.new(1,0,0,22)
         empty.BackgroundTransparency = 1
         empty.Text = "No other players in server"
-        empty.TextColor3 = Color3.fromRGB(70,70,70)
+        empty.TextColor3 = Color3.fromRGB(65,65,65)
         empty.Font = Enum.Font.Gotham
         empty.TextSize = 10
         empty.LayoutOrder = 1
@@ -975,13 +987,12 @@ end
 
 refreshPlayerList()
 
--- Refresh btn
 local refreshSec = makeSection(specPanel, "", 3)
 local refreshBtn = Instance.new("TextButton")
 refreshBtn.Size = UDim2.new(1,0,0,24)
-refreshBtn.BackgroundColor3 = Color3.fromRGB(30,30,30)
+refreshBtn.BackgroundColor3 = Color3.fromRGB(28,28,28)
 refreshBtn.Text = "🔄  Refresh Player List"
-refreshBtn.TextColor3 = Color3.fromRGB(150,150,150)
+refreshBtn.TextColor3 = Color3.fromRGB(140,140,140)
 refreshBtn.Font = Enum.Font.GothamBold
 refreshBtn.TextSize = 10
 refreshBtn.BorderSizePixel = 0
@@ -989,12 +1000,12 @@ refreshBtn.LayoutOrder = 1
 refreshBtn.Parent = refreshSec
 Instance.new("UICorner", refreshBtn).CornerRadius = UDim.new(0,6)
 
-refreshBtn.MouseButton1Click:Connect(function()
+refreshBtn.MouseButton1Click:Connect(refreshPlayerList)
+
+Players.PlayerAdded:Connect(function()
+    task.wait(0.5)
     refreshPlayerList()
 end)
-
--- Auto-refresh when players join/leave
-Players.PlayerAdded:Connect(function() task.wait(0.5) refreshPlayerList() end)
 Players.PlayerRemoving:Connect(function(plr)
     task.wait(0.1)
     if specState.target == plr then
@@ -1005,12 +1016,31 @@ Players.PlayerRemoving:Connect(function(plr)
     refreshPlayerList()
 end)
 
--- // ===================== KEYBIND =====================
+-- // ===================== INPUT HANDLER =====================
+-- Handles both K toggle and capture mode click detection
 
 UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
+    -- K = hide/show menu (always works)
     if input.KeyCode == Enum.KeyCode.K then
         Win.Visible = not Win.Visible
+        return
+    end
+
+    -- Capture mode: intercept the next left mouse click
+    if captureMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        -- Only capture if the click was NOT on the Capture button itself
+        -- (give it a tiny delay so the button's own click doesn't self-trigger)
+        task.wait(0.05)
+        if not captureMode then return end  -- was cancelled in the meantime
+
+        local mp = UserInputService:GetMouseLocation()
+        local slotID = captureSlotID
+        captureMode = false
+        captureSlotID = nil
+
+        if slotID and captureResolvers[slotID] then
+            captureResolvers[slotID].onCapture(math.floor(mp.X), math.floor(mp.Y))
+        end
     end
 end)
 
@@ -1019,17 +1049,17 @@ end)
 RunService.Heartbeat:Connect(function(dt)
     local dtms = dt * 1000
 
-    -- Live mouse display (AFK tab)
+    -- Update pinned coord + mouse bar (always visible)
     local mp = UserInputService:GetMouseLocation()
-    mouseLbl.Text = string.format("Mouse:  X = %.0f    Y = %.0f", mp.X, mp.Y)
+    PinnedMouseLbl.Text = string.format("M: %d, %d", math.floor(mp.X), math.floor(mp.Y))
 
-    -- Live coords (Teleport tab)
     local root = getRoot()
     if root then
         local p = root.Position
-        coordLbl.Text = string.format("X: %.1f    Y: %.1f    Z: %.1f", p.X, p.Y, p.Z)
+        PinnedCoordLbl.Text = string.format(
+            "X:%.1f  Y:%.1f  Z:%.1f", p.X, p.Y, p.Z)
     else
-        coordLbl.Text = "X: —    Y: —    Z: —"
+        PinnedCoordLbl.Text = "X: —   Y: —   Z: —"
     end
 
     -- Auto Jump
@@ -1043,7 +1073,7 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Follow Mouse Click
+    -- Follow Mouse
     if afkState.follow.on then
         afkState.follow.elapsed = afkState.follow.elapsed + dtms
         followBar.Size = UDim2.new(
@@ -1054,8 +1084,8 @@ RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Fixed Clicks x6
-    for i=1,6 do
+    -- Fixed x6
+    for i = 1, 6 do
         local s = afkState.fixed[i]
         if s.on then
             s.elapsed = s.elapsed + dtms
@@ -1069,6 +1099,7 @@ RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
+-- Noclip loop
 RunService.Stepped:Connect(function()
     if not tpState.noclip then return end
     local c = LP.Character
@@ -1087,4 +1118,4 @@ LP.CharacterAdded:Connect(function()
     end
 end)
 
-print("[Akuma Menu] Loaded. K to toggle.")
+print("[Akuma Menu v2] Loaded. K to toggle.")
