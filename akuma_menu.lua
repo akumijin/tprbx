@@ -8,17 +8,25 @@ local function applyGlass(parent)
         end
     end
 end
-
--- // Akuma Scripts | Main Menu v2
--- // Key System | AFK | Teleport | Spectate
--- // github.com/akumijin/tprbx
-
 -- // ===================== KEY SYSTEM =====================
 
 local KEY_URL = "https://raw.githubusercontent.com/akumijin/tprbx/main/key.txt"
 
+-- Use executor HTTP (bypasses game HttpEnabled restriction)
+local function fetchURL(url)
+    if syn and syn.request then
+        return syn.request({Url=url, Method="GET"}).Body
+    elseif http and http.request then
+        return http.request({Url=url, Method="GET"}).Body
+    elseif request then
+        return request({Url=url, Method="GET"}).Body
+    else
+        return game:HttpGet(url)
+    end
+end
+
 local keyOk, STORED_HASH = pcall(function()
-    return tonumber(game:HttpGet(KEY_URL):gsub("%s+", ""))
+    return tonumber(fetchURL(KEY_URL):gsub("%s+", ""))
 end)
 
 if not keyOk or not STORED_HASH then
