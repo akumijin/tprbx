@@ -1,3 +1,14 @@
+-- // Glass UI patcher — sets 0.5 transparency on all background frames
+local function applyGlass(parent)
+    for _, obj in ipairs(parent:GetDescendants()) do
+        if obj:IsA("Frame") or obj:IsA("ScrollingFrame") then
+            if obj.BackgroundTransparency < 0.4 then
+                obj.BackgroundTransparency = 0.5
+            end
+        end
+    end
+end
+
 -- // Akuma Scripts | Main Menu v2
 -- // Key System | AFK | Teleport | Spectate
 -- // github.com/akumijin/tprbx
@@ -39,7 +50,7 @@ ksg.Parent = LP.PlayerGui
 local kframe = Instance.new("Frame")
 kframe.Size = UDim2.new(0, 290, 0, 140)
 kframe.Position = UDim2.new(0.5, -145, 0.5, -70)
-kframe.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+kframe.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 kframe.BorderSizePixel = 0
 kframe.Active = true
 kframe.Parent = ksg
@@ -251,7 +262,7 @@ ScreenGui.Parent = LP.PlayerGui
 local Win = Instance.new("Frame")
 Win.Size = UDim2.new(0, 320, 0, 520)
 Win.Position = UDim2.new(0, 20, 0.5, -260)
-Win.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+Win.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 Win.BorderSizePixel = 0
 Win.Active = true
 Win.Draggable = true
@@ -610,9 +621,19 @@ for i = 1, 6 do
         end
     }
 
+    local capBtnHeld = false
+
+    capBtn.MouseButton1Down:Connect(function()
+        capBtnHeld = true
+    end)
+
+    capBtn.MouseButton1Up:Connect(function()
+        capBtnHeld = false
+    end)
+
     capBtn.MouseButton1Click:Connect(function()
         if captureMode and captureSlotID == i then
-            -- Cancel if already waiting
+            -- Cancel
             captureMode = false
             captureSlotID = nil
             capBtn.BackgroundColor3 = Color3.fromRGB(35,60,100)
@@ -623,10 +644,7 @@ for i = 1, 6 do
 
         -- Cancel any previously waiting capture
         if captureMode and captureSlotID and captureSlotID ~= i then
-            local prev = captureResolvers[captureSlotID]
-            if prev then
-                -- reset that button visually
-            end
+            -- previous slot stays as-is visually, we override
         end
 
         captureMode = true
@@ -1026,21 +1044,29 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         return
     end
 
-    -- Capture mode: intercept the next left mouse click
+    -- Capture mode: intercept the NEXT independent left mouse click
+    -- Uses InputEnded to confirm the button is fully released before we start listening
     if captureMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
-        -- Only capture if the click was NOT on the Capture button itself
-        -- (give it a tiny delay so the button's own click doesn't self-trigger)
-        task.wait(0.05)
-        if not captureMode then return end  -- was cancelled in the meantime
+        -- Wait for mouse button to be fully released first (InputEnded fires next)
+        -- We handle this in InputEnded below instead
+    end
+end)
 
-        local mp = UserInputService:GetMouseLocation()
-        local slotID = captureSlotID
-        captureMode = false
-        captureSlotID = nil
-
-        if slotID and captureResolvers[slotID] then
-            captureResolvers[slotID].onCapture(math.floor(mp.X), math.floor(mp.Y))
-        end
+-- // Capture: fire on InputEnded so button release doesn't self-capture
+UserInputService.InputEnded:Connect(function(input)
+    if captureMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        -- Only capture if this isn't the Capture button's own release
+        -- We wait a frame to let any MouseButton1Up from the capBtn clear first
+        task.defer(function()
+            if not captureMode then return end
+            local mp = UserInputService:GetMouseLocation()
+            local slotID = captureSlotID
+            captureMode = false
+            captureSlotID = nil
+            if slotID and captureResolvers[slotID] then
+                captureResolvers[slotID].onCapture(math.floor(mp.X), math.floor(mp.Y))
+            end
+        end)
     end
 end)
 
@@ -1117,5 +1143,8 @@ LP.CharacterAdded:Connect(function()
         setToggleBtn(noclipBtn, true)
     end
 end)
+
+-- Apply glass transparency to all frames
+applyGlass(ScreenGui)
 
 print("[Akuma Menu v2] Loaded. K to toggle.")
