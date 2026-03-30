@@ -47,7 +47,6 @@ local specState = { target = nil, connection = nil }
 local captureMode      = false
 local captureSlotID    = nil
 local captureResolvers = {}
-local captureReady     = false  -- true only after capBtn is fully released
 
 -- ============================================================
 -- // CORE FUNCTIONS
@@ -222,7 +221,7 @@ local function makeTimerBlock(parent, st, title, order)
         st.interval = v; msBox.Text = tostring(v); st.elapsed = 0
     end)
 
-    return sec, barFill
+    return sec, barFill, toggle
 end
 
 -- ============================================================
@@ -341,14 +340,16 @@ end
 -- ============================================================
 
 local afkPanel = tabPanels[1]
-local _, jumpBar   = makeTimerBlock(afkPanel, afkState.jump,   "── AUTO JUMP",               1)
-local _, followBar = makeTimerBlock(afkPanel, afkState.follow, "── AUTO CLICK (Follow Mouse)", 2)
+local _, jumpBar,   jumpToggle  = makeTimerBlock(afkPanel, afkState.jump,   "── AUTO JUMP",               1)
+local _, followBar, followToggle = makeTimerBlock(afkPanel, afkState.follow, "── AUTO CLICK (Follow Mouse)", 2)
 local fixedBars    = {}
+local fixedToggles = {}
 
 for i = 1, 6 do
     local s = afkState.fixed[i]
-    local sec, bar = makeTimerBlock(afkPanel, s, "── FIXED CLICK #" .. i, 2 + i)
-    fixedBars[i] = bar
+    local sec, bar, tog = makeTimerBlock(afkPanel, s, "── FIXED CLICK #" .. i, 2 + i)
+    fixedBars[i]    = bar
+    fixedToggles[i] = tog
 
     local coordDisp = newLabel({
         Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1,
@@ -387,28 +388,46 @@ for i = 1, 6 do
         end
     }
 
+    local capConn = nil  -- one-shot connection for this slot
+
+    local function cancelCapture()
+        captureMode = false; captureSlotID = nil;         if capConn then capConn:Disconnect(); capConn = nil end
+        capBtn.BackgroundColor3 = Color3.fromRGB(40, 70, 120)
+        capBtn.Text             = "📍 Capture Click Position"
+        capBtn.TextColor3       = Color3.fromRGB(160, 200, 255)
+    end
+
     capBtn.MouseButton1Click:Connect(function()
         if captureMode and captureSlotID == i then
-            -- Cancel
-            captureMode = false; captureSlotID = nil; captureReady = false
-            capBtn.BackgroundColor3 = Color3.fromRGB(40, 70, 120)
-            capBtn.Text             = "📍 Capture Click Position"
-            capBtn.TextColor3       = Color3.fromRGB(160, 200, 255)
-        else
-            -- Enter capture mode — NOT ready yet until button is released
-            captureMode = true; captureSlotID = i; captureReady = false
-            capBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 20)
-            capBtn.Text             = "🖱 Release to arm, then click target..."
-            capBtn.TextColor3       = Color3.fromRGB(255, 220, 100)
+            cancelCapture()
+            return
         end
-    end)
 
-    -- Phase 2: button released → now arm the capture listener
-    capBtn.MouseButton1Up:Connect(function()
-        if captureMode and captureSlotID == i then
-            captureReady = true
-            capBtn.Text = "🖱 Now click anywhere to capture..."
+        -- Cancel any other slot's capture first
+        if captureMode then
+            captureMode = false; captureSlotID = nil;             if capConn then capConn:Disconnect(); capConn = nil end
         end
+
+        captureMode = true; captureSlotID = i
+        capBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 20)
+        capBtn.Text             = "🖱 Click anywhere to set position..."
+        capBtn.TextColor3       = Color3.fromRGB(255, 220, 100)
+
+        -- Wait a short delay then create a fresh one-shot listener
+        -- This guarantees the current click is completely finished before we start listening
+        task.delay(0.2, function()
+            if not captureMode or captureSlotID ~= i then return end
+
+            capConn = UserInputService.InputBegan:Connect(function(inp, gpe)
+                if gpe then return end
+                if inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+                -- This is the user's independent click — capture it
+                local mp = UserInputService:GetMouseLocation()
+                captureResolvers[i].onCapture(math.floor(mp.X), math.floor(mp.Y))
+                cancelCapture()
+            end)
+        end)
     end)
 end
 
@@ -685,31 +704,23 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         Win.Visible = not Win.Visible
 
     elseif input.KeyCode == Enum.KeyCode.L then
-        -- Stop all autoclickers instantly
+        -- Stop follow mouse
         afkState.follow.on = false
         afkState.follow.elapsed = 0
         followBar.Size = UDim2.new(0, 0, 1, 0)
+        setToggleBtn(followToggle, false)
+        -- Stop all fixed clickers
         for i = 1, 6 do
             afkState.fixed[i].on = false
             afkState.fixed[i].elapsed = 0
             fixedBars[i].Size = UDim2.new(0, 0, 1, 0)
+            setToggleBtn(fixedToggles[i], false)
         end
         print("[AkumaMenu] All autoclickers stopped (L key)")
     end
 end)
 
--- Capture: only fires when captureReady is true (button fully released before this)
--- This guarantees the button's own click can NEVER self-capture
-UserInputService.InputEnded:Connect(function(input)
-    if captureMode and captureReady and input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local mp = UserInputService:GetMouseLocation()
-        local id = captureSlotID
-        captureMode = false; captureSlotID = nil; captureReady = false
-        if id and captureResolvers[id] then
-            captureResolvers[id].onCapture(math.floor(mp.X), math.floor(mp.Y))
-        end
-    end
-end)
+-- Capture is now handled via per-slot one-shot InputBegan connections (see AFK section)
 
 -- ============================================================
 -- // RUNTIME LOOPS
