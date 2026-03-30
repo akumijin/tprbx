@@ -47,6 +47,7 @@ local specState = { target = nil, connection = nil }
 local captureMode      = false
 local captureSlotID    = nil
 local captureResolvers = {}
+local captureReady     = false  -- true only after capBtn is fully released
 
 -- ============================================================
 -- // CORE FUNCTIONS
@@ -388,15 +389,25 @@ for i = 1, 6 do
 
     capBtn.MouseButton1Click:Connect(function()
         if captureMode and captureSlotID == i then
-            captureMode = false; captureSlotID = nil
+            -- Cancel
+            captureMode = false; captureSlotID = nil; captureReady = false
             capBtn.BackgroundColor3 = Color3.fromRGB(40, 70, 120)
             capBtn.Text             = "📍 Capture Click Position"
             capBtn.TextColor3       = Color3.fromRGB(160, 200, 255)
         else
-            captureMode = true; captureSlotID = i
+            -- Enter capture mode — NOT ready yet until button is released
+            captureMode = true; captureSlotID = i; captureReady = false
             capBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 20)
-            capBtn.Text             = "🖱 Click anywhere to capture..."
+            capBtn.Text             = "🖱 Release to arm, then click target..."
             capBtn.TextColor3       = Color3.fromRGB(255, 220, 100)
+        end
+    end)
+
+    -- Phase 2: button released → now arm the capture listener
+    capBtn.MouseButton1Up:Connect(function()
+        if captureMode and captureSlotID == i then
+            captureReady = true
+            capBtn.Text = "🖱 Now click anywhere to capture..."
         end
     end)
 end
@@ -567,8 +578,9 @@ end)
 -- // TAB 3: SPECTATE
 -- ============================================================
 
-local specPanel  = tabPanels[3]
-local playerBtns = {}
+local specPanel        = tabPanels[3]
+local playerBtns       = {}
+local selectedPlayerBtn = nil
 
 local specStatusSec = makeSection(specPanel, "", 0)
 local specStatusLbl = newLabel({
@@ -580,7 +592,7 @@ local specStatusLbl = newLabel({
 local returnSec = makeSection(specPanel, "", 1)
 local returnBtn = Instance.new("TextButton")
 returnBtn.Size = UDim2.new(1, 0, 0, 28); returnBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 30)
-returnBtn.Text = "↩  Return to Own Character"; returnBtn.TextColor3 = Color3.fromRGB(255, 160, 160)
+returnBtn.Text = "↩  Exit Spectate"; returnBtn.TextColor3 = Color3.fromRGB(255, 160, 160)
 returnBtn.Font = Enum.Font.GothamBold; returnBtn.TextSize = 11; returnBtn.BorderSizePixel = 0
 returnBtn.LayoutOrder = 1; returnBtn.Parent = returnSec; newCorner(6, returnBtn)
 
@@ -588,6 +600,12 @@ returnBtn.MouseButton1Click:Connect(function()
     stopSpectate()
     specStatusLbl.Text       = "Not spectating"
     specStatusLbl.TextColor3 = Color3.fromRGB(100, 100, 100)
+    -- Clear highlight
+    if selectedPlayerBtn then
+        selectedPlayerBtn.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
+        selectedPlayerBtn.TextColor3       = Color3.fromRGB(200, 200, 200)
+        selectedPlayerBtn = nil
+    end
 end)
 
 local playerListSec = makeSection(specPanel, "── PLAYERS", 2)
@@ -609,14 +627,18 @@ local function refreshPlayerList()
 
         btn.MouseButton1Click:Connect(function()
             spectatePlayer(plr)
-            specStatusLbl.Text       = "👁 Spectating: " .. plr.DisplayName
+            specStatusLbl.Text       = "👁  " .. plr.DisplayName
             specStatusLbl.TextColor3 = Color3.fromRGB(100, 200, 255)
+            -- Clear all highlights then highlight selected
             for _, b in ipairs(playerBtns) do
-                b.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
-                b.TextColor3       = Color3.fromRGB(200, 200, 200)
+                if b:IsA("TextButton") then
+                    b.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
+                    b.TextColor3       = Color3.fromRGB(200, 200, 200)
+                end
             end
             btn.BackgroundColor3 = Color3.fromRGB(28, 55, 90)
             btn.TextColor3       = Color3.fromRGB(150, 200, 255)
+            selectedPlayerBtn    = btn
         end)
 
         table.insert(playerBtns, btn); order += 1
@@ -649,6 +671,7 @@ Players.PlayerRemoving:Connect(function(plr)
         stopSpectate()
         specStatusLbl.Text       = "Target left the game"
         specStatusLbl.TextColor3 = Color3.fromRGB(220, 80, 80)
+        selectedPlayerBtn = nil
     end
     refreshPlayerList()
 end)
@@ -657,22 +680,34 @@ end)
 -- // INPUT
 -- ============================================================
 
-UserInputService.InputBegan:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.K then Win.Visible = not Win.Visible end
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if input.KeyCode == Enum.KeyCode.K then
+        Win.Visible = not Win.Visible
+
+    elseif input.KeyCode == Enum.KeyCode.L then
+        -- Stop all autoclickers instantly
+        afkState.follow.on = false
+        afkState.follow.elapsed = 0
+        followBar.Size = UDim2.new(0, 0, 1, 0)
+        for i = 1, 6 do
+            afkState.fixed[i].on = false
+            afkState.fixed[i].elapsed = 0
+            fixedBars[i].Size = UDim2.new(0, 0, 1, 0)
+        end
+        print("[AkumaMenu] All autoclickers stopped (L key)")
+    end
 end)
 
--- Capture fires on InputEnded + task.defer so the capBtn's own click never self-triggers
+-- Capture: only fires when captureReady is true (button fully released before this)
+-- This guarantees the button's own click can NEVER self-capture
 UserInputService.InputEnded:Connect(function(input)
-    if captureMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
-        task.defer(function()
-            if not captureMode then return end
-            local mp = UserInputService:GetMouseLocation()
-            local id = captureSlotID
-            captureMode = false; captureSlotID = nil
-            if id and captureResolvers[id] then
-                captureResolvers[id].onCapture(math.floor(mp.X), math.floor(mp.Y))
-            end
-        end)
+    if captureMode and captureReady and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local mp = UserInputService:GetMouseLocation()
+        local id = captureSlotID
+        captureMode = false; captureSlotID = nil; captureReady = false
+        if id and captureResolvers[id] then
+            captureResolvers[id].onCapture(math.floor(mp.X), math.floor(mp.Y))
+        end
     end
 end)
 
