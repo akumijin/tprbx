@@ -324,12 +324,53 @@ for i = 1, 3 do
     p.PaddingTop = UDim.new(0, 4); p.PaddingBottom = UDim.new(0, 8)
 end
 
+-- Pinned spectate header (sits between tab row and panel, only shown on spectate tab)
+local SpecPinnedBar = Instance.new("Frame")
+SpecPinnedBar.Size             = UDim2.new(1, -20, 0, 58)
+SpecPinnedBar.Position         = UDim2.new(0, 10, 0, 106)
+SpecPinnedBar.BackgroundColor3 = Color3.fromRGB(22, 22, 35)
+SpecPinnedBar.BorderSizePixel  = 0
+SpecPinnedBar.Visible          = false
+SpecPinnedBar.Parent           = Win
+newCorner(8, SpecPinnedBar)
+newStroke(Color3.fromRGB(50, 50, 80), 1, SpecPinnedBar)
+
+local SpecPinnedStatus = newLabel({
+    Size = UDim2.new(1, -16, 0, 20),
+    Position = UDim2.new(0, 8, 0, 5),
+    BackgroundTransparency = 1,
+    Text = "Not spectating",
+    TextColor3 = Color3.fromRGB(100, 100, 100),
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = SpecPinnedBar,
+})
+
+local SpecExitBtn = Instance.new("TextButton")
+SpecExitBtn.Size             = UDim2.new(1, -16, 0, 22)
+SpecExitBtn.Position         = UDim2.new(0, 8, 0, 30)
+SpecExitBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 30)
+SpecExitBtn.Text             = "↩  Exit Spectate"
+SpecExitBtn.TextColor3       = Color3.fromRGB(255, 160, 160)
+SpecExitBtn.Font             = Enum.Font.GothamBold
+SpecExitBtn.TextSize         = 11
+SpecExitBtn.BorderSizePixel  = 0
+SpecExitBtn.Parent           = SpecPinnedBar
+newCorner(6, SpecExitBtn)
+
+-- When spectate tab is active, shift the panel down to make room for the pinned bar
 local function switchTab(idx)
     for i, btn in ipairs(tabBtns) do
         btn.BackgroundColor3 = i == idx and Color3.fromRGB(40, 40, 60) or Color3.fromRGB(25, 25, 38)
         btn.TextColor3 = i == idx and Color3.fromRGB(220, 220, 220) or Color3.fromRGB(100, 100, 100)
         tabPanels[i].Visible = i == idx
     end
+    local isSpec = idx == 3
+    SpecPinnedBar.Visible = isSpec
+    -- Shift spectate panel down by pinned bar height when on spectate tab
+    tabPanels[3].Position = UDim2.new(0, 10, 0, isSpec and 168 or 106)
+    tabPanels[3].Size     = UDim2.new(1, -20, 0, isSpec and 344 or 406)
 end
 for i, btn in ipairs(tabBtns) do
     btn.MouseButton1Click:Connect(function() switchTab(i) end)
@@ -601,25 +642,15 @@ local specPanel        = tabPanels[3]
 local playerBtns       = {}
 local selectedPlayerBtn = nil
 
-local specStatusSec = makeSection(specPanel, "", 0)
-local specStatusLbl = newLabel({
-    Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "Not spectating",
-    TextColor3 = Color3.fromRGB(100, 100, 100), Font = Enum.Font.GothamBold, TextSize = 11,
-    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1, Parent = specStatusSec,
-})
-
-local returnSec = makeSection(specPanel, "", 1)
-local returnBtn = Instance.new("TextButton")
-returnBtn.Size = UDim2.new(1, 0, 0, 28); returnBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 30)
-returnBtn.Text = "↩  Exit Spectate"; returnBtn.TextColor3 = Color3.fromRGB(255, 160, 160)
-returnBtn.Font = Enum.Font.GothamBold; returnBtn.TextSize = 11; returnBtn.BorderSizePixel = 0
-returnBtn.LayoutOrder = 1; returnBtn.Parent = returnSec; newCorner(6, returnBtn)
+-- specStatusLbl and returnBtn are now the pinned SpecPinnedStatus and SpecExitBtn
+-- Keep references pointing to the pinned versions
+local specStatusLbl = SpecPinnedStatus
+local returnBtn     = SpecExitBtn
 
 returnBtn.MouseButton1Click:Connect(function()
     stopSpectate()
     specStatusLbl.Text       = "Not spectating"
     specStatusLbl.TextColor3 = Color3.fromRGB(100, 100, 100)
-    -- Clear highlight
     if selectedPlayerBtn then
         selectedPlayerBtn.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
         selectedPlayerBtn.TextColor3       = Color3.fromRGB(200, 200, 200)
@@ -627,7 +658,7 @@ returnBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-local playerListSec = makeSection(specPanel, "── PLAYERS", 2)
+local playerListSec = makeSection(specPanel, "── PLAYERS", 0)
 
 local function refreshPlayerList()
     for _, b in ipairs(playerBtns) do b:Destroy() end
@@ -675,7 +706,7 @@ end
 
 refreshPlayerList()
 
-local refreshSec = makeSection(specPanel, "", 3)
+local refreshSec = makeSection(specPanel, "", 1)
 local refreshBtn = Instance.new("TextButton")
 refreshBtn.Size = UDim2.new(1, 0, 0, 24); refreshBtn.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
 refreshBtn.Text = "🔄  Refresh Player List"; refreshBtn.TextColor3 = Color3.fromRGB(140, 140, 140)
