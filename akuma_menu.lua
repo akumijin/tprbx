@@ -96,8 +96,6 @@ local function stopSpectate()
     end
 end
 
-local function pullToMe(plr)
-    if not plr or not plr.Character then return end
     local myChar = LP.Character
     if not myChar then return end
 
@@ -687,24 +685,62 @@ returnBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-local playerListSec = makeSection(specPanel, "── PLAYERS", 0)
+-- Search bar
+local searchSec = makeSection(specPanel, "── SEARCH", 0)
+local searchBox = Instance.new("TextBox")
+searchBox.Size             = UDim2.new(1, 0, 0, 26)
+searchBox.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+searchBox.Text             = ""
+searchBox.PlaceholderText  = "🔍  Type to search players..."
+searchBox.PlaceholderColor3= Color3.fromRGB(80, 80, 100)
+searchBox.TextColor3       = Color3.fromRGB(220, 220, 220)
+searchBox.Font             = Enum.Font.Gotham
+searchBox.TextSize         = 11
+searchBox.BorderSizePixel  = 0
+searchBox.ClearTextOnFocus = false
+searchBox.LayoutOrder      = 1
+searchBox.Parent           = searchSec
+newCorner(5, searchBox)
+Instance.new("UIPadding", searchBox).PaddingLeft = UDim.new(0, 8)
+
+local playerListSec = makeSection(specPanel, "── PLAYERS", 1)
+
+local searchQuery = ""
 
 local function refreshPlayerList()
     for _, b in ipairs(playerBtns) do b:Destroy() end
     playerBtns = {}
-    local order = 1
 
+    -- Get all players except self
+    local list = {}
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LP then continue end
-        -- Row container: name btn + pull btn side by side
-        local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, 0, 0, 30)
-        row.BackgroundTransparency = 1
-        row.LayoutOrder = order
-        row.Parent = playerListSec
+        if plr ~= LP then
+            table.insert(list, plr)
+        end
+    end
+
+    -- Sort alphabetically by DisplayName
+    table.sort(list, function(a, b)
+        return a.DisplayName:lower() < b.DisplayName:lower()
+    end)
+
+    local order   = 1
+    local shown   = 0
+    local query   = searchQuery:lower()
+
+    for _, plr in ipairs(list) do
+        -- Filter: only show if display name starts with search query
+        if query ~= "" and not plr.DisplayName:lower():sub(1, #query) == query then
+            continue
+        end
+        -- Also accept if starts with query
+        if query ~= "" then
+            local nameStart = plr.DisplayName:lower():sub(1, #query)
+            if nameStart ~= query then continue end
+        end
 
         local btn = Instance.new("TextButton")
-        btn.Size             = UDim2.new(1, -68, 1, 0)
+        btn.Size             = UDim2.new(1, 0, 0, 30)
         btn.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
         btn.Text             = "👤  " .. plr.DisplayName .. "  (@" .. plr.Name .. ")"
         btn.TextColor3       = Color3.fromRGB(200, 200, 200)
@@ -712,21 +748,10 @@ local function refreshPlayerList()
         btn.TextSize         = 11
         btn.BorderSizePixel  = 0
         btn.TextXAlignment   = Enum.TextXAlignment.Left
-        btn.Parent           = row
+        btn.LayoutOrder      = order
+        btn.Parent           = playerListSec
         newCorner(6, btn)
         Instance.new("UIPadding", btn).PaddingLeft = UDim.new(0, 8)
-
-        local pullBtn = Instance.new("TextButton")
-        pullBtn.Size             = UDim2.new(0, 62, 1, 0)
-        pullBtn.Position         = UDim2.new(1, -62, 0, 0)
-        pullBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 15)
-        pullBtn.Text             = "⬇ Pull"
-        pullBtn.TextColor3       = Color3.fromRGB(255, 190, 120)
-        pullBtn.Font             = Enum.Font.GothamBold
-        pullBtn.TextSize         = 10
-        pullBtn.BorderSizePixel  = 0
-        pullBtn.Parent           = row
-        newCorner(6, pullBtn)
 
         btn.MouseButton1Click:Connect(function()
             spectatePlayer(plr)
@@ -743,34 +768,31 @@ local function refreshPlayerList()
             selectedPlayerBtn    = btn
         end)
 
-        pullBtn.MouseButton1Click:Connect(function()
-            pullBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 20)
-            task.delay(0.6, function()
-                if pullBtn and pullBtn.Parent then
-                    pullBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 15)
-                end
-            end)
-            task.spawn(function() pullToMe(plr) end)
-        end)
-
         table.insert(playerBtns, btn)
-        table.insert(playerBtns, pullBtn)
-        order += 1
+        order  += 1
+        shown  += 1
     end
 
-    if #playerBtns == 0 then
+    if shown == 0 then
+        local msg = query ~= "" and ("No players matching "" .. searchQuery .. """) or "No other players in server"
         local e = newLabel({
             Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1,
-            Text = "No other players in server", TextColor3 = Color3.fromRGB(65, 65, 65),
+            Text = msg, TextColor3 = Color3.fromRGB(65, 65, 65),
             Font = Enum.Font.Gotham, TextSize = 10, LayoutOrder = 1, Parent = playerListSec,
         })
         table.insert(playerBtns, e)
     end
 end
 
+-- Live search: filter as you type
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    searchQuery = searchBox.Text
+    refreshPlayerList()
+end)
+
 refreshPlayerList()
 
-local refreshSec = makeSection(specPanel, "", 1)
+local refreshSec = makeSection(specPanel, "", 2)
 local refreshBtn = Instance.new("TextButton")
 refreshBtn.Size = UDim2.new(1, 0, 0, 24); refreshBtn.BackgroundColor3 = Color3.fromRGB(32, 32, 45)
 refreshBtn.Text = "🔄  Refresh Player List"; refreshBtn.TextColor3 = Color3.fromRGB(140, 140, 140)
