@@ -96,6 +96,35 @@ local function stopSpectate()
     end
 end
 
+local function pullToMe(plr)
+    if not plr or not plr.Character then return end
+    local myChar = LP.Character
+    if not myChar then return end
+
+    local myRoot     = myChar:FindFirstChild("HumanoidRootPart")
+    local theirRoot  = plr.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot or not theirRoot then return end
+
+    local destination = myRoot.CFrame
+
+    -- Step 1: teleport to them so we can weld
+    myRoot.CFrame = theirRoot.CFrame
+
+    -- Step 2: weld their root to ours
+    local weld = Instance.new("WeldConstraint")
+    weld.Part0 = myRoot
+    weld.Part1 = theirRoot
+    weld.Parent = myRoot
+
+    -- Step 3: drag them back to our original position
+    task.wait(0.05)
+    myRoot.CFrame = destination
+
+    -- Step 4: release
+    task.wait(0.1)
+    weld:Destroy()
+end
+
 local function spectatePlayer(plr)
     if not plr or not plr.Character then return end
     local hum = plr.Character:FindFirstChildOfClass("Humanoid")
@@ -667,19 +696,42 @@ local function refreshPlayerList()
 
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr == LP then continue end
+        -- Row container: name btn + pull btn side by side
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 30)
+        row.BackgroundTransparency = 1
+        row.LayoutOrder = order
+        row.Parent = playerListSec
+
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, 0, 0, 30); btn.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
-        btn.Text = "👤  " .. plr.DisplayName .. "  (@" .. plr.Name .. ")"
-        btn.TextColor3 = Color3.fromRGB(200, 200, 200); btn.Font = Enum.Font.Gotham
-        btn.TextSize = 11; btn.BorderSizePixel = 0; btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.LayoutOrder = order; btn.Parent = playerListSec; newCorner(6, btn)
+        btn.Size             = UDim2.new(1, -68, 1, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
+        btn.Text             = "👤  " .. plr.DisplayName .. "  (@" .. plr.Name .. ")"
+        btn.TextColor3       = Color3.fromRGB(200, 200, 200)
+        btn.Font             = Enum.Font.Gotham
+        btn.TextSize         = 11
+        btn.BorderSizePixel  = 0
+        btn.TextXAlignment   = Enum.TextXAlignment.Left
+        btn.Parent           = row
+        newCorner(6, btn)
         Instance.new("UIPadding", btn).PaddingLeft = UDim.new(0, 8)
+
+        local pullBtn = Instance.new("TextButton")
+        pullBtn.Size             = UDim2.new(0, 62, 1, 0)
+        pullBtn.Position         = UDim2.new(1, -62, 0, 0)
+        pullBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 15)
+        pullBtn.Text             = "⬇ Pull"
+        pullBtn.TextColor3       = Color3.fromRGB(255, 190, 120)
+        pullBtn.Font             = Enum.Font.GothamBold
+        pullBtn.TextSize         = 10
+        pullBtn.BorderSizePixel  = 0
+        pullBtn.Parent           = row
+        newCorner(6, pullBtn)
 
         btn.MouseButton1Click:Connect(function()
             spectatePlayer(plr)
             specStatusLbl.Text       = "👁  " .. plr.DisplayName
             specStatusLbl.TextColor3 = Color3.fromRGB(100, 200, 255)
-            -- Clear all highlights then highlight selected
             for _, b in ipairs(playerBtns) do
                 if b:IsA("TextButton") then
                     b.BackgroundColor3 = Color3.fromRGB(28, 28, 40)
@@ -691,7 +743,19 @@ local function refreshPlayerList()
             selectedPlayerBtn    = btn
         end)
 
-        table.insert(playerBtns, btn); order += 1
+        pullBtn.MouseButton1Click:Connect(function()
+            pullBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 20)
+            task.delay(0.6, function()
+                if pullBtn and pullBtn.Parent then
+                    pullBtn.BackgroundColor3 = Color3.fromRGB(90, 45, 15)
+                end
+            end)
+            task.spawn(function() pullToMe(plr) end)
+        end)
+
+        table.insert(playerBtns, btn)
+        table.insert(playerBtns, pullBtn)
+        order += 1
     end
 
     if #playerBtns == 0 then
