@@ -96,32 +96,6 @@ local function stopSpectate()
     end
 end
 
-    local myChar = LP.Character
-    if not myChar then return end
-
-    local myRoot     = myChar:FindFirstChild("HumanoidRootPart")
-    local theirRoot  = plr.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot or not theirRoot then return end
-
-    local destination = myRoot.CFrame
-
-    -- Step 1: teleport to them so we can weld
-    myRoot.CFrame = theirRoot.CFrame
-
-    -- Step 2: weld their root to ours
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = myRoot
-    weld.Part1 = theirRoot
-    weld.Parent = myRoot
-
-    -- Step 3: drag them back to our original position
-    task.wait(0.05)
-    myRoot.CFrame = destination
-
-    -- Step 4: release
-    task.wait(0.1)
-    weld:Destroy()
-end
 
 local function spectatePlayer(plr)
     if not plr or not plr.Character then return end
